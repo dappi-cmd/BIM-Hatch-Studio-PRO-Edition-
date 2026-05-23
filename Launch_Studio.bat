@@ -1,0 +1,3 @@
+@echo off
+echo Starting BIM Hatch Studio...
+python BIM_Hatch_Studio.py
