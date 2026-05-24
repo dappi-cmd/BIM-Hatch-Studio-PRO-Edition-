@@ -1,0 +1,738 @@
+01. Backup your file first. File name is " BIM_Hatch_Studio.py "
+02. Copy below cord to the " BIM_Hatch_Studio.py " and save it.
+03. Enjoy
+
+Full Cord :
+
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+import math
+import json
+import os
+from datetime import datetime
+
+class HatchStudioApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("BIM Hatch Studio - Ultimate PRO [AI Enabled]")
+        self.root.geometry("1400x900")
+        
+        # Dark Theme Colors
+        self.bg_color = "#0f172a"
+        self.panel_color = "#1e293b"
+        self.text_color = "#f8fafc"
+        self.accent_color = "#0ea5e9"
+        self.grid_color = "#334155"
+        self.line_color = "#38bdf8"
+        self.preview_bg = "#0b1120"
+        self.error_color = "#ef4444"
+        self.success_color = "#34d399"
+        
+        # UI Styles
+        style = ttk.Style()
+        style.theme_use('default')
+        style.configure('TNotebook', background=self.panel_color, borderwidth=0)
+        style.configure('TNotebook.Tab', background=self.bg_color, foreground=self.text_color, padding=[10, 5], font=("Segoe UI", 9, "bold"))
+        style.map('TNotebook.Tab', background=[('selected', self.accent_color)])
+        style.configure('TFrame', background=self.panel_color)
+        
+        self.root.configure(bg=self.bg_color)
+        
+        # State
+        self.lines = []
+        self.history = []
+        self.redo_history = []
+        
+        self.current_shape_id = None
+        self.start_x = 0
+        self.start_y = 0
+        self.is_shift_pressed = False
+        self.pan_start_x = 0
+        self.pan_start_y = 0
+        
+        self.current_tool = tk.StringVar(value="LINE")
+        self.grid_size_mm = tk.IntVar(value=100)
+        self.canvas_width_mm = tk.IntVar(value=2000)
+        self.canvas_height_mm = tk.IntVar(value=2000)
+        
+        self.pattern_name = tk.StringVar(value="BIM_PATTERN_PRO")
+        self.pattern_type = tk.StringVar(value="MODEL")
+        
+        self.brick_w = tk.IntVar(value=200)
+        self.brick_h = tk.IntVar(value=100)
+        
+        self.zoom_level = 1.0
+        self.file_path = None
+        
+        self.setup_ui()
+        self.draw_grid()
+
+        # Keyboard Bindings
+        self.root.bind("<Shift_L>", self.on_shift_press)
+        self.root.bind("<Shift_R>", self.on_shift_press)
+        self.root.bind("<KeyRelease-Shift_L>", self.on_shift_release)
+        self.root.bind("<KeyRelease-Shift_R>", self.on_shift_release)
+        self.root.bind("<Control-z>", self.undo)
+        self.root.bind("<Control-y>", self.redo)
+        self.root.bind("<Control-s>", self.save_project)
+        self.root.bind("<Control-o>", self.load_project)
+
+    def save_state(self):
+        self.history.append([line.copy() for line in self.lines])
+        self.redo_history.clear()
+        if len(self.history) > 50:
+            self.history.pop(0)
+
+    def undo(self, event=None):
+        if self.history:
+            self.redo_history.append([line.copy() for line in self.lines])
+            self.lines = self.history.pop()
+            self.redraw_all()
+            self.generate_pat()
+
+    def redo(self, event=None):
+        if self.redo_history:
+            self.history.append([line.copy() for line in self.lines])
+            self.lines = self.redo_history.pop()
+            self.redraw_all()
+            self.generate_pat()
+
+    def on_shift_press(self, event):
+        self.is_shift_pressed = True
+
+    def on_shift_release(self, event):
+        self.is_shift_pressed = False
+
+    def setup_ui(self):
+        # Header
+        header = tk.Frame(self.root, bg=self.panel_color, height=60)
+        header.pack(side=tk.TOP, fill=tk.X)
+        
+        tk.Label(header, text="BIM Hatch Studio [Ultimate PRO]", fg=self.text_color, 
+                bg=self.panel_color, font=("Segoe UI", 16, "bold")).pack(side=tk.LEFT, padx=20, pady=15)
+        
+        # Header Buttons
+        btn_frame = tk.Frame(header, bg=self.panel_color)
+        btn_frame.pack(side=tk.RIGHT, padx=20, pady=15)
+        
+        tk.Button(btn_frame, text="💾 Save (Ctrl+S)", bg=self.grid_color, fg="white", 
+                 font=("Segoe UI", 9), relief=tk.FLAT, padx=10, command=self.save_project).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="📂 Load (Ctrl+O)", bg=self.grid_color, fg="white", 
+                 font=("Segoe UI", 9), relief=tk.FLAT, padx=10, command=self.load_project).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="↶ Undo (Ctrl+Z)", bg=self.grid_color, fg="white", 
+                 font=("Segoe UI", 9), relief=tk.FLAT, padx=10, command=self.undo).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="↷ Redo (Ctrl+Y)", bg=self.grid_color, fg="white", 
+                 font=("Segoe UI", 9), relief=tk.FLAT, padx=10, command=self.redo).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="✓ Export .PAT", bg=self.accent_color, fg="white", 
+                 font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=15, command=self.export_pat).pack(side=tk.LEFT, padx=5)
+
+        # Workspace
+        workspace = tk.Frame(self.root, bg=self.bg_color)
+        workspace.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Toolbar
+        toolbar = tk.Frame(workspace, bg=self.panel_color, width=60)
+        toolbar.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
+        
+        tk.Label(toolbar, text="TOOLS", fg=self.text_color, bg=self.panel_color, 
+                font=("Segoe UI", 9, "bold")).pack(pady=10, padx=5)
+        
+        tools = [("Line", "LINE", "╱"), ("Rect", "RECT", "□"), ("Circle", "CIRCLE", "○"), ("Eraser", "ERASER", "✖")]
+        for (name, val, icon) in tools:
+            tk.Radiobutton(toolbar, text=icon, variable=self.current_tool, value=val, 
+                          indicatoron=0, bg=self.panel_color, fg=self.text_color, 
+                          selectcolor=self.accent_color, font=("Segoe UI", 18), width=3, 
+                          relief=tk.FLAT, command=self.on_tool_change).pack(pady=5, padx=5)
+
+        tk.Button(toolbar, text="🗑", bg=self.error_color, fg="white", font=("Segoe UI", 16), 
+                 relief=tk.FLAT, command=self.clear_canvas).pack(side=tk.BOTTOM, pady=15, padx=5)
+
+        # Canvas Area
+        self.canvas_frame = tk.Frame(workspace, bg=self.panel_color, bd=1, relief=tk.SUNKEN)
+        self.canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        
+        self.canvas = tk.Canvas(self.canvas_frame, bg=self.bg_color, highlightthickness=0, cursor="crosshair")
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+        
+        self.canvas.bind("<Button-1>", self.on_press)
+        self.canvas.bind("<B1-Motion>", self.on_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.on_release)
+        self.canvas.bind("<Motion>", self.on_mouse_move)
+        
+        # Panning bindings
+        self.canvas.bind("<Button-3>", self.start_pan)
+        self.canvas.bind("<B3-Motion>", self.do_pan)
+        self.canvas.bind("<MouseWheel>", self.do_zoom)
+        self.canvas.bind("<Button-4>", self.do_zoom)
+        self.canvas.bind("<Button-5>", self.do_zoom)
+        
+        # Dimension label
+        self.dim_label = tk.Label(self.canvas, text="0,0 mm", bg="#000000", fg="#ffffff", font=("Consolas", 8))
+        self.dim_label.place(x=-100, y=-100)
+        
+        # Sidebar with Tabs
+        sidebar = ttk.Notebook(workspace, width=400)
+        sidebar.pack(side=tk.RIGHT, fill=tk.Y)
+        sidebar.pack_propagate(False)
+        
+        prop_tab = tk.Frame(sidebar, bg=self.panel_color)
+        auto_tab = tk.Frame(sidebar, bg=self.panel_color)
+        
+        sidebar.add(prop_tab, text="Properties")
+        sidebar.add(auto_tab, text="Auto-Generate (AI)")
+        
+        self.setup_properties_tab(prop_tab)
+        self.setup_autogen_tab(auto_tab)
+        
+        self.generate_pat()
+
+    def on_tool_change(self):
+        self.canvas.config(cursor="crosshair")
+
+    def start_pan(self, event):
+        self.pan_start_x = event.x
+        self.pan_start_y = event.y
+
+    def do_pan(self, event):
+        dx = event.x - self.pan_start_x
+        dy = event.y - self.pan_start_y
+        self.canvas.scan_dragto(self.pan_start_x - dx, self.pan_start_y - dy, gain=1)
+
+    def do_zoom(self, event):
+        if event.num == 5 or event.delta < 0:
+            self.zoom_level *= 0.9
+        elif event.num == 4 or event.delta > 0:
+            self.zoom_level *= 1.1
+        
+        self.zoom_level = max(0.1, min(5.0, self.zoom_level))
+        self.redraw_all()
+
+    def setup_properties_tab(self, tab):
+        tk.Label(tab, text="Canvas Size (mm)", fg="#94a3b8", bg=self.panel_color, 
+                font=("Segoe UI", 9)).grid(row=0, column=0, sticky=tk.W, padx=15, pady=(15, 0))
+        f1 = tk.Frame(tab, bg=self.panel_color)
+        f1.grid(row=1, column=0, sticky=tk.W, padx=15)
+        tk.Entry(f1, textvariable=self.canvas_width_mm, width=8, bg=self.bg_color, 
+                fg=self.text_color).pack(side=tk.LEFT)
+        tk.Label(f1, text="x", bg=self.panel_color, fg="#94a3b8").pack(side=tk.LEFT, padx=5)
+        tk.Entry(f1, textvariable=self.canvas_height_mm, width=8, bg=self.bg_color, 
+                fg=self.text_color).pack(side=tk.LEFT)
+        
+        tk.Label(tab, text="Grid Snap (mm)", fg="#94a3b8", bg=self.panel_color, 
+                font=("Segoe UI", 9)).grid(row=2, column=0, sticky=tk.W, padx=15, pady=(10, 0))
+        tk.Entry(tab, textvariable=self.grid_size_mm, width=8, bg=self.bg_color, 
+                fg=self.text_color).grid(row=3, column=0, sticky=tk.W, padx=15)
+        
+        tk.Label(tab, text="Pattern Name", fg="#94a3b8", bg=self.panel_color, 
+                font=("Segoe UI", 9)).grid(row=4, column=0, sticky=tk.W, padx=15, pady=(10, 0))
+        tk.Entry(tab, textvariable=self.pattern_name, width=30, bg=self.bg_color, 
+                fg=self.text_color).grid(row=5, column=0, sticky=tk.W, padx=15)
+        
+        tk.Label(tab, text="Pattern Type", fg="#94a3b8", bg=self.panel_color, 
+                font=("Segoe UI", 9)).grid(row=6, column=0, sticky=tk.W, padx=15, pady=(10, 0))
+        tk.OptionMenu(tab, self.pattern_type, "MODEL", "DRAFTING").grid(row=7, column=0, sticky=tk.W, padx=15)
+        
+        self.canvas_width_mm.trace_add("write", lambda *args: self.draw_grid())
+        self.canvas_height_mm.trace_add("write", lambda *args: self.draw_grid())
+        self.grid_size_mm.trace_add("write", lambda *args: self.draw_grid())
+        self.pattern_name.trace_add("write", lambda *args: self.generate_pat())
+        
+        tk.Label(tab, text="Seamless Preview (3x3 Tiling)", fg=self.text_color, bg=self.panel_color, 
+                font=("Segoe UI", 10, "bold")).grid(row=8, column=0, sticky=tk.W, padx=15, pady=(20, 5))
+        self.preview_canvas = tk.Canvas(tab, bg=self.preview_bg, height=200, highlightthickness=1, 
+                                       highlightbackground=self.grid_color)
+        self.preview_canvas.grid(row=9, column=0, sticky=tk.EW, padx=15)
+        tab.columnconfigure(0, weight=1)
+        
+        tk.Label(tab, text="Live .PAT Output", fg=self.text_color, bg=self.panel_color, 
+                font=("Segoe UI", 10, "bold")).grid(row=10, column=0, sticky=tk.W, padx=15, pady=(10, 5))
+        self.text_output = tk.Text(tab, bg=self.bg_color, fg=self.success_color, font=("Consolas", 8), 
+                                  relief=tk.FLAT, insertbackground="white", wrap=tk.WORD, height=10)
+        self.text_output.grid(row=11, column=0, sticky=tk.NSEW, padx=15, pady=(0, 15))
+        tab.rowconfigure(11, weight=1)
+        
+        self.status_label = tk.Label(tab, text="Status: Ready", fg=self.success_color, bg=self.panel_color, 
+                                    font=("Segoe UI", 8))
+        self.status_label.grid(row=12, column=0, sticky=tk.W, padx=15, pady=5)
+
+    def setup_autogen_tab(self, tab):
+        tk.Label(tab, text="Intelligent Procedural Generation", fg=self.text_color, bg=self.panel_color, 
+                font=("Segoe UI", 12, "bold")).pack(anchor=tk.W, padx=15, pady=15)
+        tk.Label(tab, text="Select a template below to automatically fill your canvas with mathematically seamless vectors.", 
+                fg="#94a3b8", bg=self.panel_color, font=("Segoe UI", 9), wraplength=350, 
+                justify=tk.LEFT).pack(anchor=tk.W, padx=15, pady=(0, 15))
+        
+        p_frame = tk.Frame(tab, bg=self.panel_color)
+        p_frame.pack(fill=tk.X, padx=15, pady=10)
+        
+        tk.Label(p_frame, text="Block Width (mm):", bg=self.panel_color, fg=self.text_color).grid(row=0, column=0, sticky=tk.W)
+        tk.Entry(p_frame, textvariable=self.brick_w, width=8, bg=self.bg_color, fg=self.text_color).grid(row=0, column=1, padx=10)
+        
+        tk.Label(p_frame, text="Block Height (mm):", bg=self.panel_color, fg=self.text_color).grid(row=1, column=0, sticky=tk.W, pady=5)
+        tk.Entry(p_frame, textvariable=self.brick_h, width=8, bg=self.bg_color, fg=self.text_color).grid(row=1, column=1, padx=10, pady=5)
+        
+        ttk.Separator(tab, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=15, pady=10)
+        
+        tk.Button(tab, text="Generate Running Bond (Brick)", bg=self.grid_color, fg="white", 
+                 relief=tk.FLAT, pady=8, font=("Segoe UI", 9), command=self.gen_brick).pack(fill=tk.X, padx=15, pady=5)
+        tk.Button(tab, text="Generate Herringbone", bg=self.grid_color, fg="white", 
+                 relief=tk.FLAT, pady=8, font=("Segoe UI", 9), command=self.gen_herringbone).pack(fill=tk.X, padx=15, pady=5)
+        tk.Button(tab, text="Generate Hexagon / Honeycomb", bg=self.grid_color, fg="white", 
+                 relief=tk.FLAT, pady=8, font=("Segoe UI", 9), command=self.gen_hexagon).pack(fill=tk.X, padx=15, pady=5)
+        tk.Button(tab, text="Generate Grid (Perfect Square)", bg=self.grid_color, fg="white", 
+                 relief=tk.FLAT, pady=8, font=("Segoe UI", 9), command=self.gen_grid).pack(fill=tk.X, padx=15, pady=5)
+        tk.Button(tab, text="Generate Diamond Pattern", bg=self.grid_color, fg="white", 
+                 relief=tk.FLAT, pady=8, font=("Segoe UI", 9), command=self.gen_diamond).pack(fill=tk.X, padx=15, pady=5)
+
+    def get_grid_size(self):
+        try:
+            return max(10, self.grid_size_mm.get())
+        except:
+            return 100
+
+    def get_canvas_dims(self):
+        try:
+            return max(100, self.canvas_width_mm.get()), max(100, self.canvas_height_mm.get())
+        except:
+            return 1000, 1000
+
+    def draw_grid(self):
+        self.canvas.delete("grid")
+        self.canvas.delete("bounds")
+        
+        grid = self.get_grid_size()
+        cw, ch = self.get_canvas_dims()
+        
+        self.canvas.create_rectangle(0, 0, cw, ch, outline="#475569", width=2, dash=(4, 4), tags="bounds")
+        
+        for i in range(0, cw + 1, grid):
+            self.canvas.create_line(i, 0, i, ch, fill=self.grid_color, tags="grid")
+        for i in range(0, ch + 1, grid):
+            self.canvas.create_line(0, i, cw, i, fill=self.grid_color, tags="grid")
+            
+        self.canvas.tag_lower("grid")
+        self.canvas.tag_lower("bounds")
+        self.update_preview()
+
+    def snap(self, val):
+        grid = self.get_grid_size()
+        return round(val / grid) * grid
+        
+    def get_canvas_coords(self, x, y):
+        return self.canvas.canvasx(x), self.canvas.canvasy(y)
+
+    def on_mouse_move(self, event):
+        cx, cy = self.get_canvas_coords(event.x, event.y)
+        cx, cy = self.snap(cx), self.snap(cy)
+        self.dim_label.config(text=f"{int(cx)} mm, {int(cy)} mm")
+        self.dim_label.place(x=event.x + 15, y=event.y + 15)
+
+    def on_press(self, event):
+        cx, cy = self.get_canvas_coords(event.x, event.y)
+        self.start_x = self.snap(cx)
+        self.start_y = self.snap(cy)
+        
+        tool = self.current_tool.get()
+        
+        if tool == "LINE":
+            self.current_shape_id = self.canvas.create_line(self.start_x, self.start_y, self.start_x, 
+                                                            self.start_y, fill=self.line_color, width=2, capstyle=tk.ROUND)
+        elif tool == "RECT":
+            self.current_shape_id = self.canvas.create_rectangle(self.start_x, self.start_y, self.start_x, 
+                                                                 self.start_y, outline=self.line_color, width=2)
+        elif tool == "CIRCLE":
+            self.current_shape_id = self.canvas.create_oval(self.start_x, self.start_y, self.start_x, 
+                                                            self.start_y, outline=self.line_color, width=2)
+        elif tool == "ERASER":
+            self.erase_near_point(cx, cy)
+
+    def erase_near_point(self, cx, cy):
+        closest = None
+        min_dist = float('inf')
+        
+        for line in self.lines:
+            x1, y1, x2, y2 = line['coords']
+            l2 = (x2 - x1) ** 2 + (y2 - y1) ** 2
+            
+            if l2 == 0:
+                d = math.hypot(cx - x1, cy - y1)
+            else:
+                t = max(0, min(1, ((cx - x1) * (x2 - x1) + (cy - y1) * (y2 - y1)) / l2))
+                proj_x, proj_y = x1 + t * (x2 - x1), y1 + t * (y2 - y1)
+                d = math.hypot(cx - proj_x, cy - proj_y)
+            
+            if d < 30 and d < min_dist:
+                min_dist = d
+                closest = line
+        
+        if closest:
+            self.save_state()
+            self.lines.remove(closest)
+            self.redraw_all()
+            self.generate_pat()
+            self.update_status("Line erased")
+
+    def on_drag(self, event):
+        if self.current_shape_id:
+            cx, cy = self.get_canvas_coords(event.x, event.y)
+            end_x = self.snap(cx)
+            end_y = self.snap(cy)
+            
+            if self.is_shift_pressed and self.current_tool.get() == "LINE":
+                dx = end_x - self.start_x
+                dy = end_y - self.start_y
+                if abs(dx) > abs(dy):
+                    end_y = self.start_y
+                else:
+                    end_x = self.start_x
+            
+            self.dim_label.config(text=f"{int(end_x)} mm, {int(end_y)} mm")
+            self.dim_label.place(x=event.x + 15, y=event.y + 15)
+            
+            tool = self.current_tool.get()
+            
+            if tool == "LINE" or tool == "RECT":
+                self.canvas.coords(self.current_shape_id, self.start_x, self.start_y, end_x, end_y)
+            elif tool == "CIRCLE":
+                r = math.hypot(end_x - self.start_x, end_y - self.start_y)
+                self.canvas.coords(self.current_shape_id, self.start_x - r, self.start_y - r, 
+                                  self.start_x + r, self.start_y + r)
+
+    def on_release(self, event):
+        if self.current_shape_id:
+            self.save_state()
+            cx, cy = self.get_canvas_coords(event.x, event.y)
+            end_x = self.snap(cx)
+            end_y = self.snap(cy)
+            
+            if self.is_shift_pressed and self.current_tool.get() == "LINE":
+                dx = end_x - self.start_x
+                dy = end_y - self.start_y
+                if abs(dx) > abs(dy):
+                    end_y = self.start_y
+                else:
+                    end_x = self.start_x
+                
+            tool = self.current_tool.get()
+            
+            if self.start_x != end_x or self.start_y != end_y:
+                if tool == "LINE":
+                    self.lines.append({'coords': (self.start_x, self.start_y, end_x, end_y)})
+                    self.update_status("Line added")
+                    
+                elif tool == "RECT":
+                    self.lines.append({'coords': (self.start_x, self.start_y, end_x, self.start_y)})
+                    self.lines.append({'coords': (end_x, self.start_y, end_x, end_y)})
+                    self.lines.append({'coords': (end_x, end_y, self.start_x, end_y)})
+                    self.lines.append({'coords': (self.start_x, end_y, self.start_x, self.start_y)})
+                    self.update_status("Rectangle added")
+                    
+                elif tool == "CIRCLE":
+                    r = math.hypot(end_x - self.start_x, end_y - self.start_y)
+                    segments = 32
+                    pts = []
+                    for i in range(segments + 1):
+                        ang = 2 * math.pi * i / segments
+                        px = self.start_x + r * math.cos(ang)
+                        py = self.start_y + r * math.sin(ang)
+                        pts.append((px, py))
+                    for i in range(segments):
+                        self.lines.append({'coords': (pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1])})
+                    self.update_status("Circle added")
+            else:
+                self.history.pop()
+                
+            self.canvas.delete(self.current_shape_id)
+            self.current_shape_id = None
+            self.redraw_all()
+            self.generate_pat()
+
+    # AUTO GENERATORS
+    
+    def gen_brick(self):
+        self.save_state()
+        self.lines.clear()
+        cw, ch = self.get_canvas_dims()
+        bw = self.brick_w.get()
+        bh = self.brick_h.get()
+        
+        if bw <= 0 or bh <= 0:
+            self.update_status("Invalid dimensions")
+            return
+        
+        for y in range(0, ch + 1, bh):
+            self.lines.append({'coords': (0, y, cw, y)})
+            
+        offset = False
+        for y in range(0, ch, bh):
+            start_x = bw // 2 if offset else 0
+            for x in range(start_x, cw + 1, bw):
+                self.lines.append({'coords': (x, y, x, y + bh)})
+            offset = not offset
+            
+        self.redraw_all()
+        self.generate_pat()
+        self.update_status("Running bond pattern generated")
+
+    def gen_herringbone(self):
+        self.save_state()
+        self.lines.clear()
+        cw, ch = self.get_canvas_dims()
+        bw = self.brick_w.get()
+        bh = self.brick_h.get()
+        
+        if bw <= 0 or bh <= 0:
+            self.update_status("Invalid dimensions")
+            return
+        
+        for row in range(0, ch, int(bh)):
+            for col in range(0, cw, int(bw)):
+                if (row // int(bh) + col // int(bw)) % 2 == 0:
+                    self.lines.append({'coords': (col, row, col + bw, row + bh)})
+                else:
+                    self.lines.append({'coords': (col + bw, row, col, row + bh)})
+        
+        self.redraw_all()
+        self.generate_pat()
+        self.update_status("Herringbone pattern generated")
+
+    def gen_hexagon(self):
+        self.save_state()
+        self.lines.clear()
+        cw, ch = self.get_canvas_dims()
+        radius = self.brick_w.get() / 2
+        
+        if radius <= 0:
+            self.update_status("Invalid dimensions")
+            return
+        
+        dy = math.sqrt(3) * radius
+        dx = 3 / 2 * radius
+        
+        for row in range(int(ch / dy) + 2):
+            for col in range(int(cw / dx) + 2):
+                x = col * dx
+                y = row * dy
+                if col % 2 == 1:
+                    y += dy / 2
+                
+                pts = [
+                    (x + radius * math.cos(math.radians(a)), 
+                     y + radius * math.sin(math.radians(a)))
+                    for a in [0, 60, 120, 180, 240, 300]
+                ]
+                
+                for i in range(6):
+                    self.lines.append({'coords': (pts[i][0], pts[i][1], pts[(i + 1) % 6][0], pts[(i + 1) % 6][1])})
+        
+        self.redraw_all()
+        self.generate_pat()
+        self.update_status("Hexagon pattern generated")
+
+    def gen_grid(self):
+        self.save_state()
+        self.lines.clear()
+        cw, ch = self.get_canvas_dims()
+        size = self.brick_w.get()
+        
+        if size <= 0:
+            self.update_status("Invalid dimensions")
+            return
+        
+        for x in range(0, cw + 1, size):
+            self.lines.append({'coords': (x, 0, x, ch)})
+        
+        for y in range(0, ch + 1, size):
+            self.lines.append({'coords': (0, y, cw, y)})
+        
+        self.redraw_all()
+        self.generate_pat()
+        self.update_status("Grid pattern generated")
+
+    def gen_diamond(self):
+        self.save_state()
+        self.lines.clear()
+        cw, ch = self.get_canvas_dims()
+        size = self.brick_w.get()
+        
+        if size <= 0:
+            self.update_status("Invalid dimensions")
+            return
+        
+        half_size = size // 2
+        
+        for y in range(0, ch, size):
+            for x in range(0, cw, size):
+                pts = [
+                    (x + half_size, y),
+                    (x + size, y + half_size),
+                    (x + half_size, y + size),
+                    (x, y + half_size)
+                ]
+                
+                for i in range(4):
+                    self.lines.append({'coords': (pts[i][0], pts[i][1], pts[(i + 1) % 4][0], pts[(i + 1) % 4][1])})
+        
+        self.redraw_all()
+        self.generate_pat()
+        self.update_status("Diamond pattern generated")
+
+    def redraw_all(self):
+        self.canvas.delete("all")
+        self.draw_grid()
+        
+        for line in self.lines:
+            x1, y1, x2, y2 = line['coords']
+            self.canvas.create_line(x1, y1, x2, y2, fill=self.line_color, width=2, capstyle=tk.ROUND)
+
+    def update_preview(self):
+        self.preview_canvas.delete("all")
+        cw, ch = self.get_canvas_dims()
+        
+        if cw == 0 or ch == 0:
+            return
+        
+        prev_w, prev_h = 350, 200
+        scale_x = prev_w / (cw * 3)
+        scale_y = prev_h / (ch * 3)
+        scale = min(scale_x, scale_y) * 0.9
+        offset_x = (prev_w - (cw * 3 * scale)) / 2
+        offset_y = (prev_h - (ch * 3 * scale)) / 2
+        
+        for row in range(3):
+            for col in range(3):
+                tx = offset_x + col * cw * scale
+                ty = offset_y + row * ch * scale
+                self.preview_canvas.create_rectangle(tx, ty, tx + cw * scale, ty + ch * scale, 
+                                                    outline="#1e293b", dash=(2, 2))
+                
+                for line in self.lines:
+                    x1, y1, x2, y2 = line['coords']
+                    self.preview_canvas.create_line(tx + x1 * scale, ty + y1 * scale, 
+                                                  tx + x2 * scale, ty + y2 * scale, 
+                                                  fill="#38bdf8", width=1)
+
+    def clear_canvas(self):
+        if len(self.lines) > 0:
+            result = messagebox.askyesno("Clear Canvas", "Are you sure you want to clear the canvas?")
+            if result:
+                self.save_state()
+                self.lines.clear()
+                self.redraw_all()
+                self.generate_pat()
+                self.update_status("Canvas cleared")
+
+    def generate_pat(self):
+        code = f"*{self.pattern_name.get()}, Generated by BIM Hatch Studio PRO\n"
+        code += f";%TYPE={self.pattern_type.get()}\n"
+        
+        cw, ch = self.get_canvas_dims()
+        line_count = 0
+        
+        for line in self.lines:
+            x1, y1, x2, y2 = line['coords']
+            dx, dy = x2 - x1, y2 - y1
+            
+            if dx == 0 and dy == 0:
+                continue
+            
+            angle = math.degrees(math.atan2(-dy, dx))
+            if angle < 0:
+                angle += 360
+                
+            length = math.sqrt(dx ** 2 + dy ** 2)
+            repeat_x = cw if dx == 0 else 0
+            repeat_y = ch if dy == 0 else 0
+            
+            code += f"{angle:.2f},{x1:.2f},{-y1:.2f},{repeat_x:.2f},{repeat_y:.2f},{length:.2f},-{length:.2f}\n"
+            line_count += 1
+            
+        self.text_output.delete("1.0", tk.END)
+        self.text_output.insert(tk.END, code)
+        self.update_preview()
+        self.update_status(f"Pattern updated: {line_count} lines")
+
+    def update_status(self, message):
+        self.status_label.config(text=f"Status: {message}")
+
+    def export_pat(self):
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".pat",
+            initialfile=f"{self.pattern_name.get()}.pat",
+            filetypes=[("AutoCAD/Revit Pattern", "*.pat"), ("All Files", "*.*")]
+        )
+        
+        if filepath:
+            try:
+                with open(filepath, 'w') as f:
+                    f.write(self.text_output.get("1.0", tk.END).strip())
+                messagebox.showinfo("Success", f"Pattern exported to:\n{filepath}")
+                self.update_status(f"Exported: {os.path.basename(filepath)}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to save file:\n{str(e)}")
+                self.update_status("Export failed")
+
+    def save_project(self, event=None):
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".hatch",
+            initialfile=f"{self.pattern_name.get()}.hatch",
+            filetypes=[("BIM Hatch Project", "*.hatch"), ("JSON", "*.json"), ("All Files", "*.*")]
+        )
+        
+        if filepath:
+            try:
+                project_data = {
+                    "pattern_name": self.pattern_name.get(),
+                    "pattern_type": self.pattern_type.get(),
+                    "canvas_width": self.canvas_width_mm.get(),
+                    "canvas_height": self.canvas_height_mm.get(),
+                    "grid_size": self.grid_size_mm.get(),
+                    "lines": self.lines,
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+                with open(filepath, 'w') as f:
+                    json.dump(project_data, f, indent=2)
+                
+                self.file_path = filepath
+                messagebox.showinfo("Success", f"Project saved to:\n{filepath}")
+                self.update_status(f"Saved: {os.path.basename(filepath)}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to save project:\n{str(e)}")
+                self.update_status("Save failed")
+
+    def load_project(self, event=None):
+        filepath = filedialog.askopenfilename(
+            filetypes=[("BIM Hatch Project", "*.hatch"), ("JSON", "*.json"), ("All Files", "*.*")]
+        )
+        
+        if filepath:
+            try:
+                with open(filepath, 'r') as f:
+                    project_data = json.load(f)
+                
+                self.pattern_name.set(project_data.get("pattern_name", "BIM_PATTERN_PRO"))
+                self.pattern_type.set(project_data.get("pattern_type", "MODEL"))
+                self.canvas_width_mm.set(project_data.get("canvas_width", 2000))
+                self.canvas_height_mm.set(project_data.get("canvas_height", 2000))
+                self.grid_size_mm.set(project_data.get("grid_size", 100))
+                self.lines = project_data.get("lines", [])
+                
+                self.file_path = filepath
+                self.history.clear()
+                self.redo_history.clear()
+                
+                self.redraw_all()
+                self.generate_pat()
+                
+                messagebox.showinfo("Success", f"Project loaded from:\n{filepath}")
+                self.update_status(f"Loaded: {os.path.basename(filepath)}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to load project:\n{str(e)}")
+                self.update_status("Load failed")
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = HatchStudioApp(root)
+    root.mainloop()
